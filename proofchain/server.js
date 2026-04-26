@@ -1,10 +1,10 @@
-require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 
+/* 🔥 PUT YOUR GEMINI API KEY HERE */
 const genAI = new GoogleGenerativeAI("AIzaSyAH6235Tc085vuD_sUKO6dcJdnVH2q9G_Q");
 
 app.use(express.json());
@@ -15,35 +15,25 @@ const PORT = 3000;
 /* =========================
    FETCH GITHUB DATA
 ========================= */
-async function fetchGitHubData(githubUrl) {
-  const match = githubUrl.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
-  if (!match) throw new Error('Invalid GitHub URL');
+async function fetchGitHubData(url) {
+  const match = url.match(/github\.com\/([^\/]+)\/([^\/]+)/);
+  if (!match) throw new Error("Invalid GitHub URL");
 
-  const owner = match[1];
-  const repo = match[2];
+  const [_, owner, repo] = match;
 
   const base = `https://api.github.com/repos/${owner}/${repo}`;
 
-  const [repoRes, langRes, commitRes] = await Promise.all([
-    fetch(base),
-    fetch(`${base}/languages`),
-    fetch(`${base}/commits?per_page=5`)
-  ]);
-
-  if (!repoRes.ok) throw new Error('Repo not found');
+  const repoRes = await fetch(base);
+  if (!repoRes.ok) throw new Error("GitHub repo not found");
 
   const repoData = await repoRes.json();
-  const languages = langRes.ok ? await langRes.json() : {};
-  const commits = commitRes.ok ? await commitRes.json() : [];
 
   return {
     name: repoData.name,
     description: repoData.description,
     stars: repoData.stargazers_count,
     forks: repoData.forks_count,
-    language: repoData.language,
-    languages,
-    commits: commits.map(c => c.commit.message)
+    language: repoData.language
   };
 }
 
@@ -51,26 +41,24 @@ async function fetchGitHubData(githubUrl) {
    GENERATE PROOF ID
 ========================= */
 function generateProofId(input) {
-  return 'PC-' + crypto
-    .createHash('sha256')
+  return "PC-" + crypto
+    .createHash("sha256")
     .update(input + Date.now())
-    .digest('hex')
+    .digest("hex")
     .slice(0, 10)
     .toUpperCase();
 }
 
 /* =========================
-   MAIN ANALYSIS ROUTE
+   MAIN API
 ========================= */
 app.post('/api/analyze', async (req, res) => {
   try {
-    const { input } = req.body;
+    let { input } = req.body;
 
-    let finalInput = input;
-
-    if (input.includes('github.com')) {
+    if (input.includes("github.com")) {
       const data = await fetchGitHubData(input);
-      finalInput = JSON.stringify(data, null, 2);
+      input = JSON.stringify(data, null, 2);
     }
 
     const model = genAI.getGenerativeModel({
@@ -78,20 +66,28 @@ app.post('/api/analyze', async (req, res) => {
     });
 
     const prompt = `
-Analyze this developer profile.
+Analyze this developer:
 
 Return:
 - Score (0-100)
-- 3 Strengths
-- 2 Weaknesses
-- Short Summary
+- 3 strengths
+- 2 weaknesses
+- Short summary
 
 Input:
-${finalInput}
+${input}
 `;
 
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: prompt }]
+        }
+      ]
+    });
+
+    const text = result.response.candidates[0].content.parts[0].text;
 
     res.json({
       result: text,
@@ -104,9 +100,6 @@ ${finalInput}
   }
 });
 
-/* =========================
-   START SERVER
-========================= */
 app.listen(PORT, () => {
   console.log(`Running at http://localhost:${PORT}`);
 });

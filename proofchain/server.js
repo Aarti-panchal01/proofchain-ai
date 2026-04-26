@@ -4,8 +4,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 
-/* 🔥 PUT YOUR GEMINI API KEY HERE */
-const genAI = new GoogleGenerativeAI("AIzaSyAH6235Tc085vuD_sUKO6dcJdnVH2q9G_Q");
+const genAI = new GoogleGenerativeAI("AIzaSyDWUwEDbRdzDKi-tk6zfdGOSqU7rZ0g7SA");
 
 app.use(express.json());
 app.use(express.static('public'));

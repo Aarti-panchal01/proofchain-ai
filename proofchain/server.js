@@ -60,7 +60,7 @@ async function fetchGitHubData(url) {
 
 /* ── Gemini analysis ──────────────────────────────── */
 async function analyzeWithGemini(type, inputData) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   let context;
   if (type === 'github') {

@@ -10,71 +10,81 @@ const genAI = new GoogleGenerativeAI("AIzaSyAH6235Tc085vuD_sUKO6dcJdnVH2q9G_Q");
 app.use(express.json());
 app.use(express.static('public'));
 
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
+/* =========================
+   FETCH GITHUB DATA
+========================= */
 async function fetchGitHubData(githubUrl) {
   const match = githubUrl.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
-  if (!match) {
-    throw new Error('Invalid GitHub URL format');
-  }
+  if (!match) throw new Error('Invalid GitHub URL');
 
   const owner = match[1];
-  const repoName = match[2];
-  const baseUrl = `https://api.github.com/repos/${owner}/${repoName}`;
+  const repo = match[2];
 
-  const headers = {
-    'User-Agent': 'ProofChain-AI'
-  };
+  const base = `https://api.github.com/repos/${owner}/${repo}`;
 
-  const [repoRes, languagesRes, commitsRes] = await Promise.all([
-    fetch(baseUrl, { headers }),
-    fetch(`${baseUrl}/languages`, { headers }),
-    fetch(`${baseUrl}/commits?per_page=10`, { headers })
+  const [repoRes, langRes, commitRes] = await Promise.all([
+    fetch(base),
+    fetch(`${base}/languages`),
+    fetch(`${base}/commits?per_page=5`)
   ]);
 
-  if (!repoRes.ok) {
-    throw new Error('GitHub repo not found or is private');
-  }
+  if (!repoRes.ok) throw new Error('Repo not found');
 
-  const repo = await repoRes.json();
-  const languagesObj = languagesRes.ok ? await languagesRes.json() : {};
-  const commits = commitsRes.ok ? await commitsRes.json() : [];
+  const repoData = await repoRes.json();
+  const languages = langRes.ok ? await langRes.json() : {};
+  const commits = commitRes.ok ? await commitRes.json() : [];
 
   return {
-    name: repo.name,
-    description: repo.description || '',
-    stars: repo.stargazers_count,
-    forks: repo.forks_count,
-    primaryLanguage: repo.language || 'Unknown',
-    languages: languagesObj,
-    commitMessages: commits.slice(0, 10).map((c) => c.commit.message)
+    name: repoData.name,
+    description: repoData.description,
+    stars: repoData.stargazers_count,
+    forks: repoData.forks_count,
+    language: repoData.language,
+    languages,
+    commits: commits.map(c => c.commit.message)
   };
 }
 
+/* =========================
+   GENERATE PROOF ID
+========================= */
 function generateProofId(input) {
-  return 'PC-' + crypto.createHash('sha256').update(input + Date.now()).digest('hex').slice(0, 12).toUpperCase();
+  return 'PC-' + crypto
+    .createHash('sha256')
+    .update(input + Date.now())
+    .digest('hex')
+    .slice(0, 10)
+    .toUpperCase();
 }
 
+/* =========================
+   MAIN ANALYSIS ROUTE
+========================= */
 app.post('/api/analyze', async (req, res) => {
   try {
     const { input } = req.body;
 
     let finalInput = input;
 
-    // If GitHub link → fetch repo data
     if (input.includes('github.com')) {
       const data = await fetchGitHubData(input);
       finalInput = JSON.stringify(data, null, 2);
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash"
+    });
 
     const prompt = `
-Analyze this developer and return:
-- score (0-100)
-- strengths (3)
-- weaknesses (2-3)
-- short summary
+Analyze this developer profile.
+
+Return:
+- Score (0-100)
+- 3 Strengths
+- 2 Weaknesses
+- Short Summary
 
 Input:
 ${finalInput}
@@ -88,12 +98,15 @@ ${finalInput}
       proofId: generateProofId(input)
     });
 
-  } catch (error) {
-    console.error(error);
+  } catch (err) {
+    console.error("ERROR:", err);
     res.status(500).json({ error: "AI failed" });
   }
 });
 
+/* =========================
+   START SERVER
+========================= */
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`Running at http://localhost:${PORT}`);
 });

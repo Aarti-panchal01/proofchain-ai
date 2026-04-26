@@ -1,67 +1,80 @@
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
 
 const app = express();
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 app.use(express.json());
 app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-/* ── GitHub fetch ─────────────────────────────────── */
-async function fetchGitHubData(url) {
-  const match = url.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
-  if (!match) throw new Error('Invalid GitHub URL');
+async function fetchGitHubData(githubUrl) {
+  const match = githubUrl.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
+  if (!match) {
+    throw new Error('Invalid GitHub URL format');
+  }
 
   const owner = match[1];
-  const repo  = match[2].replace(/\.git$/, '');
+  const repoName = match[2].replace(/\.git$/, '');
+  const baseUrl = `https://api.github.com/repos/${owner}/${repoName}`;
 
   const headers = {
     'User-Agent': 'ProofChain-AI',
-    'Accept': 'application/vnd.github+json'
+    Accept: 'application/vnd.github+json'
   };
 
   const token = process.env.GITHUB_TOKEN;
-  if (token && token.length > 10 && !token.startsWith('your_')) {
-    headers['Authorization'] = `token ${token}`;
+  if (token && token !== 'your_github_personal_access_token_here') {
+    headers.Authorization = `token ${token}`;
   }
 
-  const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
-  console.log('GitHub status:', repoRes.status);
+  const [repoRes, languagesRes, commitsRes, readmeRes] = await Promise.all([
+    fetch(baseUrl, { headers }),
+    fetch(`${baseUrl}/languages`, { headers }),
+    fetch(`${baseUrl}/commits?per_page=10`, { headers }),
+    fetch(`${baseUrl}/readme`, { headers })
+  ]);
 
   if (!repoRes.ok) {
-    const body = await repoRes.text();
-    console.error('GitHub error body:', body);
-    throw new Error(`GitHub API returned ${repoRes.status} — repo may be private or URL is wrong`);
+    if (repoRes.status === 401) {
+      throw new Error('GitHub token is invalid. Remove or update GITHUB_TOKEN in .env');
+    }
+    if (repoRes.status === 403) {
+      throw new Error('GitHub API rate limit exceeded. Add a valid GITHUB_TOKEN and try again.');
+    }
+    throw new Error('GitHub repo not found or is private');
   }
 
-  const data = await repoRes.json();
+  const repo = await repoRes.json();
+  const languagesObj = languagesRes.ok ? await languagesRes.json() : {};
+  const commits = commitsRes.ok ? await commitsRes.json() : [];
 
-  // Fetch languages (best effort)
-  let languages = {};
-  try {
-    const langRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/languages`, { headers });
-    if (langRes.ok) languages = await langRes.json();
-  } catch (_) {}
+  let readmeText = '';
+  if (readmeRes.ok) {
+    const readmeData = await readmeRes.json();
+    if (readmeData.content) {
+      readmeText = Buffer.from(readmeData.content, 'base64').toString('utf8');
+    }
+  }
 
   return {
-    name: data.name,
-    description: data.description || '',
-    stars: data.stargazers_count,
-    forks: data.forks_count,
-    primaryLanguage: data.language || 'Unknown',
-    languages,
-    updatedAt: data.updated_at
+    name: repo.name,
+    description: repo.description || '',
+    stars: repo.stargazers_count,
+    forks: repo.forks_count,
+    primaryLanguage: repo.language || 'Unknown',
+    languages: languagesObj,
+    createdAt: repo.created_at,
+    updatedAt: repo.updated_at,
+    commitMessages: commits.slice(0, 10).map((c) => c.commit.message.split('\n')[0]),
+    readmeSnippet: readmeText.slice(0, 800)
   };
 }
 
-/* ── Gemini analysis ──────────────────────────────── */
-async function analyzeWithGemini(type, inputData) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
-
+async function analyzeWithGroq(type, inputData) {
   let context;
   if (type === 'github') {
     context = `
@@ -76,54 +89,61 @@ Last Updated: ${inputData.updatedAt}
     context = `Developer Profile / Resume:\n${inputData}`;
   }
 
-  const prompt = `
-You are a senior engineering hiring manager. Analyze the following and respond with ONLY a valid JSON object — no markdown, no backticks, no explanation before or after.
-
-${context}
-
-Return exactly this JSON structure:
+  const completion = await groq.chat.completions.create({
+    model: 'llama3-70b-8192',
+    messages: [
+      {
+        role: 'system',
+        content: 'You are a senior engineering hiring manager. Always respond with valid JSON only — no markdown, no backticks, no explanation.'
+      },
+      {
+        role: 'user',
+        content: `Analyze the following and return ONLY a JSON object with exactly this structure:
 {
   "trustScore": <integer 0-100>,
-  "summary": "<2-3 sentence plain English summary, be specific>",
+  "summary": "<2-3 sentence specific summary>",
   "skills": [
-    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" },
-    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" },
-    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" },
-    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" },
-    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" }
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one sentence>" },
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one sentence>" },
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one sentence>" },
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one sentence>" },
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one sentence>" }
   ],
   "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
   "weaknesses": ["<gap 1>", "<gap 2>"],
-  "verdict": "<one punchy sentence, senior engineer final take>"
+  "verdict": "<one punchy sentence>"
 }
-`;
 
-  const result = await model.generateContent(prompt);
-  let text = result.response.text().trim();
+${context}`
+      }
+    ],
+    temperature: 0.7,
+    max_tokens: 1024
+  });
 
-  // Strip markdown fences if Gemini wraps in them
+  let text = completion.choices[0].message.content.trim();
   text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-
   return JSON.parse(text);
 }
 
-/* ── Proof ID ─────────────────────────────────────── */
-function generateProofId(input) {
-  return 'PC-' + crypto
-    .createHash('sha256')
-    .update(input + Date.now().toString())
-    .digest('hex')
-    .slice(0, 16)
-    .toUpperCase();
+function generateProofId(inputString) {
+  const timestamp = Date.now().toString();
+  const hash = crypto.createHash('sha256').update(inputString + timestamp).digest('hex');
+  return 'PC-' + hash.slice(0, 16).toUpperCase();
 }
 
-/* ── Main route ───────────────────────────────────── */
 app.post('/api/analyze', async (req, res) => {
   try {
     const { type, input } = req.body;
 
     if (!type || !input) {
       return res.status(400).json({ error: 'Missing type or input' });
+    }
+    if (!['github', 'text'].includes(type)) {
+      return res.status(400).json({ error: 'type must be "github" or "text"' });
+    }
+    if (typeof input !== 'string' || input.trim().length < 10) {
+      return res.status(400).json({ error: 'Input too short' });
     }
 
     let inputData;
@@ -133,23 +153,22 @@ app.post('/api/analyze', async (req, res) => {
       inputData = input.trim();
     }
 
-    const analysis = await analyzeWithGemini(type, inputData);
+    const analysis = await analyzeWithGroq(type, inputData);
+    const proofId = generateProofId(input.trim());
 
     return res.json({
-      proofId: generateProofId(input),
+      proofId,
       type,
-      inputLabel: type === 'github' ? inputData.name : 'Resume / Profile',
+      inputLabel: type === 'github' ? inputData.name : 'Resume/Profile',
       analysis,
       generatedAt: new Date().toISOString()
     });
-
   } catch (err) {
     console.error('Analysis error:', err.message);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message || 'Analysis failed' });
   }
 });
 
-/* ── Start ────────────────────────────────────────── */
 app.listen(PORT, () => {
   console.log(`ProofChain AI running at http://localhost:${PORT}`);
 });

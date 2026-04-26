@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ProofChain AI — Developer Verification</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header class="site-header">
+    <div class="logo">
+      <span class="logo-icon">⬡</span>
+      <span class="logo-text">ProofChain <span class="logo-accent">AI</span></span>
+    </div>
+    <p class="tagline">Verify developer credibility in 10 seconds.</p>
+  </header>
+
+  <!-- MAIN CONTENT -->
+  <main class="container">
+
+    <!-- INPUT CARD -->
+    <section class="card input-card" id="input-section">
+      <h2 class="card-title">Analyze a Developer</h2>
+
+      <!-- TAB SWITCHER -->
+      <div class="tab-group" role="tablist">
+        <button class="tab active" data-tab="github" role="tab" aria-selected="true">
+          GitHub Repo
+        </button>
+        <button class="tab" data-tab="text" role="tab" aria-selected="false">
+          Resume / Bio
+        </button>
+      </div>
+
+      <!-- GITHUB INPUT -->
+      <div class="input-panel" id="panel-github">
+        <label class="input-label" for="github-url">GitHub Repository URL</label>
+        <input
+          type="url"
+          id="github-url"
+          class="text-input"
+          placeholder="https://github.com/torvalds/linux"
+          autocomplete="off"
+        />
+        <p class="input-hint">Public repositories only. Private repos cannot be analyzed.</p>
+      </div>
+
+      <!-- TEXT INPUT -->
+      <div class="input-panel hidden" id="panel-text">
+        <label class="input-label" for="resume-text">Paste Resume or Bio</label>
+        <textarea
+          id="resume-text"
+          class="text-input textarea"
+          placeholder="Paste your resume, LinkedIn bio, or any text describing your skills and experience..."
+          rows="7"
+        ></textarea>
+        <p class="input-hint">Minimum 50 characters. The more detail, the better the analysis.</p>
+      </div>
+
+      <button class="btn-analyze" id="analyze-btn">
+        <span class="btn-text">Analyze Now</span>
+        <span class="btn-spinner hidden" aria-hidden="true"></span>
+      </button>
+
+      <p class="error-msg hidden" id="error-msg" role="alert"></p>
+    </section>
+
+    <!-- RESULT CARD (hidden until analysis done) -->
+    <section class="card result-card hidden" id="result-section">
+
+      <!-- PROOF BADGE -->
+      <div class="proof-badge-row">
+        <div class="proof-badge">
+          <span class="proof-icon">✓</span>
+          <div class="proof-text">
+            <span class="proof-label">Proof ID</span>
+            <span class="proof-id" id="proof-id">PC-XXXXXXXXXXXXXXXX</span>
+          </div>
+        </div>
+        <div class="proof-meta">
+          <span class="proof-timestamp" id="proof-timestamp"></span>
+        </div>
+      </div>
+
+      <!-- SUBJECT NAME -->
+      <h2 class="result-title" id="result-title">Analysis Result</h2>
+
+      <!-- TRUST SCORE -->
+      <div class="trust-score-section">
+        <div class="trust-score-ring" id="trust-ring">
+          <svg viewBox="0 0 120 120" class="ring-svg" aria-hidden="true">
+            <circle class="ring-bg" cx="60" cy="60" r="50"/>
+            <circle class="ring-fill" id="ring-circle" cx="60" cy="60" r="50"
+              stroke-dasharray="314"
+              stroke-dashoffset="314"
+            />
+          </svg>
+          <div class="ring-label">
+            <span class="ring-number" id="trust-number">0</span>
+            <span class="ring-sub">/ 100</span>
+          </div>
+        </div>
+        <div class="trust-info">
+          <h3 class="trust-title">Trust Score</h3>
+          <p class="trust-summary" id="trust-summary"></p>
+          <p class="verdict-text" id="verdict-text"></p>
+        </div>
+      </div>
+
+      <!-- SKILL BREAKDOWN -->
+      <div class="skills-section">
+        <h3 class="section-heading">Skill Breakdown</h3>
+        <div class="skill-list" id="skill-list">
+          <!-- Injected by JS -->
+        </div>
+      </div>
+
+      <!-- STRENGTHS + WEAKNESSES -->
+      <div class="sw-row">
+        <div class="sw-card strengths-card">
+          <h3 class="section-heading">Strengths</h3>
+          <ul class="sw-list" id="strengths-list"></ul>
+        </div>
+        <div class="sw-card weaknesses-card">
+          <h3 class="section-heading">Gaps</h3>
+          <ul class="sw-list" id="weaknesses-list"></ul>
+        </div>
+      </div>
+
+      <!-- SHARE ROW -->
+      <div class="share-row">
+        <button class="btn-secondary" id="share-btn">🔗 Copy Share Link</button>
+        <button class="btn-secondary" id="download-pdf-btn">⬇ Download PDF</button>
+        <button class="btn-secondary" id="share-x-btn">𝕏 Share on X</button>
+        <button class="btn-secondary" id="new-analysis-btn">↩ New Analysis</button>
+      </div>
+
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <p>ProofChain AI · Powered by Groq + Llama 3.3</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,6 +1,10 @@
 require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+
+const app = express();
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const Anthropic = require('@anthropic-ai/sdk');
 
 const app = express();
@@ -108,6 +112,31 @@ function generateProofId(inputString) {
 
 app.post('/api/analyze', async (req, res) => {
   try {
+    const { input } = req.body;
+
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+
+    const prompt = `
+    Analyze this developer input and return:
+    - score (0-100)
+    - strengths (3 points)
+    - weaknesses (3 points)
+    - summary
+
+    Input:
+    ${input}
+    `;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+
+    res.json({
+      result: text,
+      proofId: 'PC-' + Math.random().toString(36).substring(2, 10).toUpperCase()
+    });
+  } catch (error) {
+    console.error('Gemini error:', error);
+    res.status(500).json({ error: 'AI processing failed' });
     const { type, input } = req.body;
 
     if (!type || !input) {

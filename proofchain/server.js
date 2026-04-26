@@ -4,7 +4,6 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 
-/* 🔥 PUT YOUR GEMINI API KEY HERE */
 const genAI = new GoogleGenerativeAI("AIzaSyDWUwEDbRdzDKi-tk6zfdGOSqU7rZ0g7SA");
 
 app.use(express.json());
@@ -13,7 +12,7 @@ app.use(express.static('public'));
 const PORT = 3000;
 
 /* =========================
-   FETCH GITHUB DATA (FIXED)
+   FETCH GITHUB DATA (FINAL FIX)
 ========================= */
 async function fetchGitHubData(url) {
   try {
@@ -29,9 +28,16 @@ async function fetchGitHubData(url) {
 
     const apiUrl = `https://api.github.com/repos/${owner}/${repo}`;
 
-    const res = await fetch(apiUrl);
+    const res = await fetch(apiUrl, {
+      headers: {
+        "User-Agent": "proofchain-app",
+        "Accept": "application/vnd.github+json"
+      }
+    });
 
     if (!res.ok) {
+      const text = await res.text();
+      console.log("GitHub RAW ERROR:", text);
       throw new Error("GitHub repo not found");
     }
 
@@ -69,6 +75,10 @@ function generateProofId(input) {
 app.post('/api/analyze', async (req, res) => {
   try {
     let { input } = req.body;
+
+    if (!input) {
+      return res.status(400).json({ error: "No input provided" });
+    }
 
     if (input.includes("github.com")) {
       const data = await fetchGitHubData(input);
@@ -118,5 +128,5 @@ ${input}
    START SERVER
 ========================= */
 app.listen(PORT, () => {
-  console.log(`Running at http://localhost:${PORT}`);
+  console.log(`🚀 Running at http://localhost:${PORT}`);
 });

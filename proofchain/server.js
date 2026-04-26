@@ -4,7 +4,6 @@ const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
-
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 app.use(express.json());
@@ -12,129 +11,145 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-/* =========================
-   FETCH GITHUB DATA
-========================= */
+/* ── GitHub fetch ─────────────────────────────────── */
 async function fetchGitHubData(url) {
-  try {
-    const cleanUrl = url.trim().replace(/\/$/, '');
-    const parts = cleanUrl.split('/');
+  const match = url.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
+  if (!match) throw new Error('Invalid GitHub URL');
 
-    const owner = parts[3];
-    const repo = parts[4];
+  const owner = match[1];
+  const repo  = match[2].replace(/\.git$/, '');
 
-    if (!owner || !repo) {
-      throw new Error("Invalid GitHub URL");
-    }
+  const headers = {
+    'User-Agent': 'ProofChain-AI',
+    'Accept': 'application/vnd.github+json'
+  };
 
-    const apiUrl = `https://api.github.com/repos/${owner}/${repo}`;
-
-    const headers = {
-      "User-Agent": "proofchain-app",
-      "Accept": "application/vnd.github+json"
-    };
-
-    if (process.env.GITHUB_TOKEN) {
-      headers.Authorization = `token ${process.env.GITHUB_TOKEN}`;
-    }
-
-    const res = await fetch(apiUrl, { headers });
-
-    console.log("GitHub STATUS:", res.status);
-
-    if (!res.ok) {
-      const text = await res.text();
-      console.log("GitHub ERROR:", text);
-      throw new Error("GitHub repo not found or API blocked");
-    }
-
-    const data = await res.json();
-
-    return {
-      name: data.name,
-      description: data.description || '',
-      stars: data.stargazers_count,
-      forks: data.forks_count,
-      language: data.language
-    };
-
-  } catch (err) {
-    console.error("GitHub fetch error:", err.message);
-    throw err;
+  const token = process.env.GITHUB_TOKEN;
+  if (token && token.length > 10 && !token.startsWith('your_')) {
+    headers['Authorization'] = `token ${token}`;
   }
+
+  const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+  console.log('GitHub status:', repoRes.status);
+
+  if (!repoRes.ok) {
+    const body = await repoRes.text();
+    console.error('GitHub error body:', body);
+    throw new Error(`GitHub API returned ${repoRes.status} — repo may be private or URL is wrong`);
+  }
+
+  const data = await repoRes.json();
+
+  // Fetch languages (best effort)
+  let languages = {};
+  try {
+    const langRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/languages`, { headers });
+    if (langRes.ok) languages = await langRes.json();
+  } catch (_) {}
+
+  return {
+    name: data.name,
+    description: data.description || '',
+    stars: data.stargazers_count,
+    forks: data.forks_count,
+    primaryLanguage: data.language || 'Unknown',
+    languages,
+    updatedAt: data.updated_at
+  };
 }
 
-/* =========================
-   ANALYZE WITH GEMINI
-========================= */
-async function analyzeWithGemini(input) {
-  const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash"
-  });
+/* ── Gemini analysis ──────────────────────────────── */
+async function analyzeWithGemini(type, inputData) {
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+  let context;
+  if (type === 'github') {
+    context = `
+GitHub Repository: ${inputData.name}
+Description: ${inputData.description}
+Primary Language: ${inputData.primaryLanguage}
+All Languages: ${JSON.stringify(inputData.languages)}
+Stars: ${inputData.stars} | Forks: ${inputData.forks}
+Last Updated: ${inputData.updatedAt}
+`;
+  } else {
+    context = `Developer Profile / Resume:\n${inputData}`;
+  }
 
   const prompt = `
-Analyze this developer:
+You are a senior engineering hiring manager. Analyze the following and respond with ONLY a valid JSON object — no markdown, no backticks, no explanation before or after.
 
-Return:
-- Score (0-100)
-- 3 strengths
-- 2 weaknesses
-- Short summary
+${context}
 
-Input:
-${input}
+Return exactly this JSON structure:
+{
+  "trustScore": <integer 0-100>,
+  "summary": "<2-3 sentence plain English summary, be specific>",
+  "skills": [
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" },
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" },
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" },
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" },
+    { "name": "<skill>", "score": <integer 0-100>, "note": "<one short sentence>" }
+  ],
+  "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
+  "weaknesses": ["<gap 1>", "<gap 2>"],
+  "verdict": "<one punchy sentence, senior engineer final take>"
+}
 `;
 
   const result = await model.generateContent(prompt);
-  return result.response.text();
+  let text = result.response.text().trim();
+
+  // Strip markdown fences if Gemini wraps in them
+  text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+
+  return JSON.parse(text);
 }
 
-/* =========================
-   GENERATE PROOF ID
-========================= */
+/* ── Proof ID ─────────────────────────────────────── */
 function generateProofId(input) {
-  return "PC-" + crypto
-    .createHash("sha256")
-    .update(input + Date.now())
-    .digest("hex")
-    .slice(0, 10)
+  return 'PC-' + crypto
+    .createHash('sha256')
+    .update(input + Date.now().toString())
+    .digest('hex')
+    .slice(0, 16)
     .toUpperCase();
 }
 
-/* =========================
-   MAIN ROUTE
-========================= */
+/* ── Main route ───────────────────────────────────── */
 app.post('/api/analyze', async (req, res) => {
   try {
-    const { input } = req.body;
+    const { type, input } = req.body;
 
-    if (!input) {
-      return res.status(400).json({ error: "No input provided" });
+    if (!type || !input) {
+      return res.status(400).json({ error: 'Missing type or input' });
     }
 
-    let finalInput = input;
-
-    if (input.includes("github.com")) {
-      const data = await fetchGitHubData(input);
-      finalInput = JSON.stringify(data, null, 2);
+    let inputData;
+    if (type === 'github') {
+      inputData = await fetchGitHubData(input.trim());
+    } else {
+      inputData = input.trim();
     }
 
-    const result = await analyzeWithGemini(finalInput);
+    const analysis = await analyzeWithGemini(type, inputData);
 
-    res.json({
-      result,
-      proofId: generateProofId(input)
+    return res.json({
+      proofId: generateProofId(input),
+      type,
+      inputLabel: type === 'github' ? inputData.name : 'Resume / Profile',
+      analysis,
+      generatedAt: new Date().toISOString()
     });
 
   } catch (err) {
-    console.error("ERROR:", err.message);
-    res.status(500).json({ error: err.message });
+    console.error('Analysis error:', err.message);
+    return res.status(500).json({ error: err.message });
   }
 });
 
-/* =========================
-   START SERVER
-========================= */
+/* ── Start ────────────────────────────────────────── */
 app.listen(PORT, () => {
-  console.log(`🚀 Running at http://localhost:${PORT}`);
+  console.log(`ProofChain AI running at http://localhost:${PORT}`);
 });
